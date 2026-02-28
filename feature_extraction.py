@@ -74,10 +74,7 @@ def process_logs_to_dataframe(folder_path, gt_map):
         # Extract receiver ID from filename
         filename = os.path.basename(file_path)
         parts = filename.split('-')
-        if len(parts) >= 6:
-            receiver_id = int(parts[5].split('.')[0])
-        else:
-            continue
+        receiver_id = int(parts[2].split('.')[0])
 
         # Default ego state in case Type 3 arrives before any Type 2
         latest_ego_state = {
@@ -165,21 +162,24 @@ def calculate_kinematic_features(df):
     df['beacon_rate'] = np.where(df['elapsed_time'] == 0, 0.0, df['msg_count'] / df['elapsed_time'])
     
     # 4. Neighborhood Average Speed (\mu_{i,t}, \sigma_{i,t})
-    # Grouped by receiver and a rolling 1-second window
+    # Sort by receiver FIRST, then time. This ensures the DataFrame row order 
+    # exactly matches the output order of the groupby operation.
+    df = df.sort_values(by=["receiver", "rcvTime"]).reset_index(drop=True)
+    
+    # Create the timedelta column required for time-based rolling
     df['rcvTime_td'] = pd.to_timedelta(df['rcvTime'], unit='s')
-    df = df.set_index('rcvTime_td').sort_index()
     
-    # Calculate rolling mean and std for each receiver's neighborhood
-    rolling_stats = df.groupby('receiver')['speed'].rolling('1s')
-    df['avg_speed_1s'] = rolling_stats.mean().reset_index(level=0, drop=True)
-    df['stddev_speed_1s'] = rolling_stats.std().fillna(0.0).reset_index(level=0, drop=True)
+    # Group by receiver and apply a time-based rolling window
+    rolling_stats = df.groupby('receiver').rolling('1s', on='rcvTime_td')['speed']
     
-    df = df.reset_index(drop=True)
+    # Bypass Pandas index alignment completely by assigning the raw numpy arrays (.values).
+    # Since we pre-sorted by receiver and time, the order aligns perfectly.
+    df['avg_speed_1s'] = rolling_stats.mean().values
+    df['stddev_speed_1s'] = rolling_stats.std().fillna(0.0).values
     
     # Drop intermediate columns used for calculation
-    cols_to_drop = ['dt', 'euclidean_dist', 'kinematic_dist', 'msg_count', 'elapsed_time']
-    df = df.drop(columns=cols_to_drop)
-    
+    cols_to_drop = ['dt', 'euclidean_dist', 'kinematic_dist', 'msg_count', 'elapsed_time', 'rcvTime_td']
+    df = df.drop(columns=cols_to_drop, errors='ignore')
     # Sort back to chronological order for the GNN graph builder
     df = df.sort_values(by=["receiver", "rcvTime"]).reset_index(drop=True)
     
@@ -205,7 +205,7 @@ def main(input_folder, output_csv):
 if __name__ == "__main__":
     # Example usage:
     # Set this to the path containing your traceJSON and traceGroundTruthJSON files
-    FOLDER_PATH = "C:\\Users\\ganes\\projects\\cip_test\\cip_2nd_review\\veremi\\VeReMi_25200_28800_2025-11-15_13_57_9\\" 
+    FOLDER_PATH = "C:\\Users\\ganes\\verimi-extension\\disruptive-sybil-0709\\VeReMi_25200_28800_2022-9-13_21_8_24\\" 
     OUTPUT_FILE = "gnn_dqn_ready_dataset.csv"
     
     main(FOLDER_PATH, OUTPUT_FILE)
