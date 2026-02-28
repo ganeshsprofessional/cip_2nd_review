@@ -27,9 +27,9 @@ def load_ground_truth(folder_path):
                 data = json.loads(line)
                 
                 if data.get("type") == 4:
-                    sender = data.get("sender")
-                    send_time = data.get("sendTime")
-                    gt_map[(sender, send_time)] = data
+                    # sender = data.get("sender")
+                    # send_time = data.get("sendTime")
+                    gt_map[data.get("messageID")] = data
                     
     print(f"Loaded {len(gt_map)} ground truth records.")
     return gt_map
@@ -39,10 +39,11 @@ def check_if_attack(type3_data, gt_map):
     1. Accept missing: Returns 0 if no ground truth is found.
     2. Tolerance threshold: Returns 1 only if difference exceeds noise tolerance.
     """
-    sender = type3_data.get("sender")
-    send_time = type3_data.get("sendTime")
+    # sender = type3_data.get("sender")
+    # send_time = type3_data.get("sendTime")
+    messageID = type3_data.get("messageID")
     
-    gt_data = gt_map.get((sender, send_time))
+    gt_data = gt_map.get(messageID)
     if not gt_data:
         return 0  # Missing ground truth assumed normal
     
@@ -74,7 +75,7 @@ def process_logs_to_dataframe(folder_path, gt_map):
         # Extract receiver ID from filename
         filename = os.path.basename(file_path)
         parts = filename.split('-')
-        receiver_id = int(parts[2].split('.')[0])
+        receiver_id = int(parts[1].split('.')[0])
 
         # Default ego state in case Type 3 arrives before any Type 2
         latest_ego_state = {
@@ -206,6 +207,6 @@ if __name__ == "__main__":
     # Example usage:
     # Set this to the path containing your traceJSON and traceGroundTruthJSON files
     FOLDER_PATH = "C:\\Users\\ganes\\verimi-extension\\disruptive-sybil-0709\\VeReMi_25200_28800_2022-9-13_21_8_24\\" 
-    OUTPUT_FILE = "gnn_dqn_ready_dataset.csv"
+    OUTPUT_FILE = "gnn_dqn_ready_dataset2.csv"
     
     main(FOLDER_PATH, OUTPUT_FILE)
