@@ -63,10 +63,13 @@ def check_if_attack(type3_data, gt_map):
     
     return 0
 
-def process_logs_to_dataframe(folder_path, gt_map):
+def process_logs_to_dataframe(folder_path, gt_map, attacker_vehicle_ids, real_sender_ids, use_vehicle_level_labeling=True):
     """
     Reads receiver logs, uses the most recent Type 2 message as ego state,
     and extracts Type 3 messages into flat rows.
+
+    For vehicle-level labeling (e.g. Grid Sybil): is_attack=1 if the SENDER is
+    an attacker vehicle or a Sybil fake (sender not in ground truth).
     """
     log_files = glob.glob(os.path.join(folder_path, "traceJSON-*.json"))
     rows = []
@@ -75,7 +78,9 @@ def process_logs_to_dataframe(folder_path, gt_map):
         # Extract receiver ID from filename
         filename = os.path.basename(file_path)
         parts = filename.split('-')
-        receiver_id = int(parts[1].split('.')[0])
+        if len(parts) < 2:
+            continue
+        receiver_id = parts[1]
 
         # Default ego state in case Type 3 arrives before any Type 2
         latest_ego_state = {
@@ -101,7 +106,20 @@ def process_logs_to_dataframe(folder_path, gt_map):
                     t3_acl = data.get("acl", [0,0,0])
                     t3_hed = data.get("hed", [0,0,0])
                     
-                    is_attack = check_if_attack(data, gt_map)
+                    sender = data.get("sender")
+                    sender_str = str(sender) if sender is not None else ""
+                    if use_vehicle_level_labeling:
+                        # Vehicle-level: is message from an attacker?
+                        # 1) Sender is attacker's real vehicle (from trace filename)
+                        # 2) Sender is Sybil fake: not in ground truth (only if gt exists)
+                        is_attack = (
+                            sender_str in attacker_vehicle_ids
+                            or (real_sender_ids and sender_str not in real_sender_ids)
+                        )
+                        is_attack = 1 if is_attack else 0
+                    else:
+                        # Message-level: is content falsified?
+                        is_attack = check_if_attack(data, gt_map)
                     
                     row = {
                         "rcvTime": data.get("rcvTime"),
@@ -186,14 +204,70 @@ def calculate_kinematic_features(df):
     
     return df
 
-def main(input_folder, output_csv):
+
+def map_receivers_to_attack_type(folder_path):
+    """
+    Scans traceJSON-*.json files and returns a mapping of receiver_id -> attack_type.
+    """
+    log_files = glob.glob(os.path.join(folder_path, "traceJSON-*.json"))
+    receiver_to_attack = {}
+    
+    for file_path in log_files:
+        filename = os.path.basename(file_path)
+        parts = filename.split('-')
+        if len(parts) >= 4:
+            receiver_id = parts[1]
+            attack_type = parts[3]
+            receiver_to_attack[receiver_id] = attack_type
+    
+    return receiver_to_attack
+
+
+def build_attacker_sender_set(receiver_to_attack, gt_map, vehicle_level_attack_types=None):
+    """
+    Builds the set of sender IDs that are attackers (for vehicle-level labeling).
+
+    - receiver_to_attack: receiver_id -> attack_type (from filenames)
+    - gt_map: ground truth (sender, sendTime) -> data
+    - vehicle_level_attack_types: list of attack types where we use vehicle-level
+      labeling (e.g. ["A16"] for Grid Sybil). If None, uses ["A16"].
+
+    Returns:
+    - attacker_vehicle_ids: set of vehicle IDs that are attackers (have trace with attack type)
+    - real_sender_ids: set of sender IDs that appear in ground truth (real vehicles)
+    """
+    if vehicle_level_attack_types is None:
+        vehicle_level_attack_types = ["A16", "A17"]
+
+    # Attackers = receivers whose trace file has the given attack type
+    attacker_vehicle_ids = {
+        str(r) for r, at in receiver_to_attack.items()
+        if at in vehicle_level_attack_types
+    }
+
+    # Real senders = any sender that appears in ground truth (real vehicles only)
+    real_sender_ids = {str(sender) for (sender, _) in gt_map.keys()}
+
+    return attacker_vehicle_ids, real_sender_ids
+
+
+def main(input_folder, output_csv, use_vehicle_level_labeling=True):
     print(f"Starting preprocessing for folder: {input_folder}")
     
     # Step 1: Load Ground Truth map
     gt_map = load_ground_truth(input_folder)
+    receiver_to_attack = map_receivers_to_attack_type(input_folder)
+    attacker_vehicle_ids, real_sender_ids = build_attacker_sender_set(
+        receiver_to_attack, gt_map
+    )
+    print(f"Attacker vehicle IDs (from trace filenames): {len(attacker_vehicle_ids)}")
+    print(f"Real sender IDs (from ground truth): {len(real_sender_ids)}")
     
     # Step 2: Parse Type 2 and Type 3 logs into a DataFrame
-    df = process_logs_to_dataframe(input_folder, gt_map)
+    df = process_logs_to_dataframe(
+        input_folder, gt_map, attacker_vehicle_ids, real_sender_ids,
+        use_vehicle_level_labeling=use_vehicle_level_labeling
+    )
     print(f"Extracted {len(df)} Type 3 messages.")
     
     # Step 3: Calculate temporal and kinematic features
@@ -206,7 +280,9 @@ def main(input_folder, output_csv):
 if __name__ == "__main__":
     # Example usage:
     # Set this to the path containing your traceJSON and traceGroundTruthJSON files
-    FOLDER_PATH = "C:\\Users\\ganes\\verimi-extension\\disruptive-sybil-0709\\VeReMi_25200_28800_2022-9-13_21_8_24\\" 
-    OUTPUT_FILE = "gnn_dqn_ready_dataset2.csv"
+    FOLDER_PATH = "/Users/marushikamanohar/Downloads/CIP/datasets/DataReplaySybil_0709/VeReMi_25200_28800_2022-9-13_21:7:46"
+    #"/Users/marushikamanohar/Downloads/CIP/datasets/GridSybil_0709/VeReMi_25200_28800_2025-11-15_13:57:9"
+    #"C:\\Users\\ganes\\verimi-extension\\disruptive-sybil-0709\\VeReMi_25200_28800_2022-9-13_21_8_24\\" 
+    OUTPUT_FILE = "gnn_dqn_data_replay_dataset.csv"
     
     main(FOLDER_PATH, OUTPUT_FILE)
