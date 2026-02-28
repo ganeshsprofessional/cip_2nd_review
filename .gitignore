@@ -2,5 +2,5 @@ veremi/
 *.json
 *.csv
 .venv/
-*env*
+*env
 *env/
